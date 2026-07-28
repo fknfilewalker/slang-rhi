@@ -155,12 +155,17 @@ public:
 
     bool captureEnabled() const { return std::getenv("MTL_CAPTURE_ENABLED") != nullptr; }
 
+    /// Forwards shader `printf` output to the debug callback. Null if unsupported by the OS.
+    NS::SharedPtr<MTL::LogState> createShaderLogState();
+
     NS::SharedPtr<MTL::Device> m_device;
     /// The single command queue. Device-level operations (readBuffer,
     /// createBuffer, createTexture) use m_queue->m_queueFence to participate
     /// in the fence chain. See synchronization model in metal-command.h.
     RefPtr<CommandQueueImpl> m_queue;
     NS::SharedPtr<MTL::CommandQueue> m_commandQueue;
+    /// Receives shader `printf` output. Must be attached to the command queue at creation.
+    NS::SharedPtr<MTL::LogState> m_logState;
     ClearEngine m_clearEngine;
 
     // Global registry of all acceleration structures.

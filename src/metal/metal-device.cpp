@@ -66,6 +66,49 @@ Result DeviceImpl::getNativeDeviceHandles(DeviceNativeHandles* outHandles)
     return SLANG_OK;
 }
 
+NS::SharedPtr<MTL::LogState> DeviceImpl::createShaderLogState()
+{
+    // MTLLogState requires macOS 15 / iOS 18.
+    if (!NS::ProcessInfo::processInfo()->isOperatingSystemAtLeastVersion({15, 0, 0}))
+    {
+        return {};
+    }
+
+    auto logDesc = NS::TransferPtr(MTL::LogStateDescriptor::alloc()->init());
+    logDesc->setLevel(MTL::LogLevelDebug);
+    logDesc->setBufferSize(1 * 1024 * 1024);
+
+    NS::Error* error = nullptr;
+    NS::SharedPtr<MTL::LogState> logState = NS::TransferPtr(m_device->newLogState(logDesc.get(), &error));
+    if (!logState)
+    {
+        handleMessage(
+            DebugMessageType::Warning,
+            DebugMessageSource::Driver,
+            "MTLLogState creation failed; shader printf output will not be reported"
+        );
+        return {};
+    }
+
+    logState->addLogHandler(
+        [this](NS::String* subsystem, NS::String* category, MTL::LogLevel level, NS::String* message)
+        {
+            SLANG_UNUSED(subsystem);
+            SLANG_UNUSED(category);
+            const char* text = message ? message->utf8String() : nullptr;
+            if (!text)
+            {
+                return;
+            }
+            DebugMessageType type =
+                (level >= MTL::LogLevelError) ? DebugMessageType::Error : DebugMessageType::Info;
+            handleMessage(type, DebugMessageSource::Driver, text);
+        }
+    );
+
+    return logState;
+}
+
 Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
 {
     AUTORELEASEPOOL
@@ -79,7 +122,19 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
     {
         return SLANG_FAIL;
     }
-    m_commandQueue = NS::TransferPtr(m_device->newCommandQueue(64));
+    m_logState = createShaderLogState();
+
+    if (m_logState)
+    {
+        auto queueDesc = NS::TransferPtr(MTL::CommandQueueDescriptor::alloc()->init());
+        queueDesc->setMaxCommandBufferCount(64);
+        queueDesc->setLogState(m_logState.get());
+        m_commandQueue = NS::TransferPtr(m_device->newCommandQueue(queueDesc.get()));
+    }
+    else
+    {
+        m_commandQueue = NS::TransferPtr(m_device->newCommandQueue(64));
+    }
     if (!m_commandQueue)
     {
         return SLANG_FAIL;
